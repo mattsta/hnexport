@@ -5,6 +5,7 @@ retry logic, connection pooling, and rate limiting.
 """
 
 import asyncio
+import json
 from typing import Any, Optional
 
 import httpx
@@ -47,9 +48,9 @@ class HackerNewsClient:
         self.max_retries = max_retries or config.api.max_retries
         self.backoff_factor = config.api.backoff_factor
 
-        # Concurrency control
-        max_concurrent = max_concurrent or config.concurrency.max_concurrent_requests
-        self._semaphore = asyncio.Semaphore(max_concurrent)
+        # Concurrency control - store as instance variable for connection pool config
+        self._max_concurrent = max_concurrent or config.concurrency.max_concurrent_requests
+        self._semaphore = asyncio.Semaphore(self._max_concurrent)
 
         # HTTP client (will be initialized in __aenter__)
         self._client: Optional[httpx.AsyncClient] = None
@@ -68,16 +69,16 @@ class HackerNewsClient:
         )
 
         logger.info(
-            f"Initialized HackerNewsClient (max_concurrent={max_concurrent}, "
+            f"Initialized HackerNewsClient (max_concurrent={self._max_concurrent}, "
             f"max_retries={self.max_retries})"
         )
 
     async def __aenter__(self) -> "HackerNewsClient":
         """Enter async context manager, creating the HTTP client."""
-        # Configure connection pooling
+        # Configure connection pooling based on instance settings
         limits = httpx.Limits(
-            max_connections=config.concurrency.max_concurrent_requests * 2,
-            max_keepalive_connections=config.concurrency.max_concurrent_requests,
+            max_connections=self._max_concurrent * 2,
+            max_keepalive_connections=self._max_concurrent,
         )
 
         self._client = httpx.AsyncClient(
@@ -170,11 +171,8 @@ class HackerNewsClient:
                 logger.debug(f"Item {item_id} is null (deleted/nonexistent)")
                 return None
 
-            # Parse JSON
-            import json
+            # Parse JSON and create HNItem
             data = json.loads(content)
-
-            # Create HNItem from response
             return HNItem(**data)
 
         except ItemNotFoundError:
@@ -190,10 +188,21 @@ class HackerNewsClient:
             item_ids: List of item IDs to fetch
 
         Returns:
-            List of HNItem objects (None for deleted/null items)
+            List of HNItem objects (None for deleted/null items or errors)
         """
         tasks = [self.get_item(item_id) for item_id in item_ids]
-        return await asyncio.gather(*tasks, return_exceptions=False)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Convert exceptions to None and log errors
+        processed_results = []
+        for item_id, result in zip(item_ids, results):
+            if isinstance(result, Exception):
+                logger.error(f"Error fetching item {item_id}: {result}")
+                processed_results.append(None)
+            else:
+                processed_results.append(result)
+
+        return processed_results
 
     async def get_user(self, username: str) -> Optional[HNUser]:
         """Fetch a user profile.
@@ -216,7 +225,6 @@ class HackerNewsClient:
                 logger.debug(f"User {username} not found")
                 return None
 
-            import json
             data = json.loads(content)
             return HNUser(**data)
 
@@ -235,7 +243,6 @@ class HackerNewsClient:
         url = f"{self.base_url}/maxitem.json"
         content = await self._fetch_with_retry(url)
 
-        import json
         highest_id = json.loads(content)
         logger.info(f"Highest item ID: {highest_id}")
         return int(highest_id)

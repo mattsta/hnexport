@@ -6,6 +6,7 @@ Modern async/await implementation replacing the old thread-based approach.
 import asyncio
 import json
 import lzma
+import os
 import time
 from pathlib import Path
 from typing import Optional
@@ -92,21 +93,26 @@ class HNDownloader:
         """
         bundle_path = self._bundle_path(item_type, start_id)
 
-        # Compress and write
-        compressed_data = lzma.compress(
-            b"\n".join(items_data),
+        # Compress in thread pool to avoid blocking event loop
+        data_to_compress = b"\n".join(items_data)
+        compressed_data = await asyncio.to_thread(
+            lzma.compress,
+            data_to_compress,
             preset=config.storage.compression_preset,
         )
 
-        # Write atomically (write to temp, then rename)
+        # Write atomically (write to temp, then rename) - use thread pool for I/O
         temp_path = bundle_path.with_suffix(".tmp")
-        temp_path.write_bytes(compressed_data)
-        temp_path.rename(bundle_path)
+        await asyncio.to_thread(temp_path.write_bytes, compressed_data)
+        await asyncio.to_thread(temp_path.rename, bundle_path)
 
         # Set file mtime to last item's timestamp
         if last_timestamp:
-            import os
-            os.utime(bundle_path, (last_timestamp, last_timestamp))
+            await asyncio.to_thread(
+                os.utime,
+                bundle_path,
+                (last_timestamp, last_timestamp),
+            )
 
         self.stats.bundles_created += 1
         logger.debug(
@@ -119,6 +125,7 @@ class HNDownloader:
         start_id: int,
         end_id: int,
         item_type: str = "item",
+        client: Optional[HackerNewsClient] = None,
     ) -> None:
         """Download a range of items with bundling.
 
@@ -126,8 +133,15 @@ class HNDownloader:
             start_id: First item ID
             end_id: Last item ID (inclusive)
             item_type: Type directory name
+            client: Optional existing client to reuse (creates new if None)
         """
-        async with HackerNewsClient() as client:
+        # Reuse provided client or create new one
+        should_close_client = client is None
+        if client is None:
+            client = HackerNewsClient()
+            await client.__aenter__()
+
+        try:
             # Process in bundles
             for bundle_start in range(start_id, end_id + 1, self.bundle_size):
                 bundle_end = min(bundle_start + self.bundle_size - 1, end_id)
@@ -170,14 +184,19 @@ class HNDownloader:
                     last_timestamp,
                 )
 
-                # Log progress
-                if self.stats.bundles_created % 10 == 0:
+                # Log progress (every 10 bundles, plus first bundle)
+                if self.stats.bundles_created % 10 == 0 or self.stats.bundles_created == 1:
                     rate = self.stats.items_per_second
                     logger.info(
                         f"Progress: {self.stats.bundles_created} bundles, "
                         f"{self.stats.successful:,} items, "
                         f"{rate:.1f} items/sec"
                     )
+
+        finally:
+            # Clean up client if we created it
+            if should_close_client and client:
+                await client.__aexit__(None, None, None)
 
     async def download_all_items(self) -> DownloadStats:
         """Download all HackerNews items.
@@ -187,13 +206,14 @@ class HNDownloader:
         """
         self.stats.start_time = time.time()
 
+        # Reuse single client for both operations
         async with HackerNewsClient() as client:
             # Get highest item ID
             highest_id = await client.get_highest_item_id()
             logger.info(f"Starting download of items 0-{highest_id:,}")
 
-        # Download all items
-        await self.download_item_range(0, highest_id)
+            # Download all items using the same client
+            await self.download_item_range(0, highest_id, client=client)
 
         self.stats.end_time = time.time()
         logger.info(f"Download complete: {self.stats}")
@@ -211,8 +231,14 @@ class HNDownloader:
         """
         self.stats.start_time = time.time()
 
-        # Read usernames
-        usernames = users_file.read_text().strip().split("\n")
+        # Read and validate usernames
+        content = await asyncio.to_thread(users_file.read_text)
+        usernames = [u.strip() for u in content.split("\n") if u.strip()]
+
+        if not usernames:
+            logger.warning(f"No usernames found in {users_file}")
+            return self.stats
+
         logger.info(f"Loaded {len(usernames)} usernames from {users_file}")
 
         async with HackerNewsClient() as client:
@@ -243,7 +269,13 @@ class HNDownloader:
                     user_dir.mkdir(parents=True, exist_ok=True)
                     user_file = user_dir / f"{username}.json"
 
-                    user_file.write_text(json.dumps(user.to_dict(), indent=2))
+                    json_content = json.dumps(
+                        user.to_dict(),
+                        indent=2,
+                        ensure_ascii=False,
+                        default=str,
+                    )
+                    await asyncio.to_thread(user_file.write_text, json_content)
 
                     self.stats.successful += 1
                     self.stats.total_items += 1

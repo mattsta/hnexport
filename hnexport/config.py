@@ -77,10 +77,6 @@ class StorageConfig:
     # Split processing settings
     monthly_split_duration: int = 3  # months per split
 
-    def __post_init__(self) -> None:
-        """Ensure output directory exists."""
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
 
 @dataclass
 class LoggingConfig:
