@@ -140,6 +140,46 @@ async def download():
 asyncio.run(example())
 ```
 
+### Analytics Package
+
+HNexport includes a comprehensive analytics package with **9 major features** for analyzing downloaded data:
+
+```python
+from pathlib import Path
+from hnexport.analytics import (
+    StatsAnalyzer,       # Generate comprehensive statistics
+    DataExporter,        # Export to CSV, SQLite, JSONL, TSV
+    SearchIndex,         # Full-text search with SQLite FTS5
+    TrendAnalyzer,       # Analyze trends and patterns
+    DataValidator,       # Validate data integrity
+    NetworkGraphBuilder, # Build user interaction graphs (requires networkx)
+    IncrementalUpdater,  # Efficient delta downloads
+    RealtimeMonitor,     # Monitor new items in real-time
+    ReportGenerator,     # Generate comprehensive reports
+)
+
+# Example: Generate statistics
+analyzer = StatsAnalyzer(data_dir=Path("hn/item"))
+report = analyzer.analyze()
+print(report)
+
+# Example: Export to SQLite for analysis
+exporter = DataExporter(data_dir=Path("hn/item"))
+count = exporter.export_to_sqlite("hn.db", create_indexes=True)
+
+# Example: Build user network graph (requires: pip install networkx)
+builder = NetworkGraphBuilder(data_dir=Path("hn/item"))
+graph = builder.build_user_interaction_graph(max_bundles=1000)
+stats = builder.analyze_graph(graph)
+```
+
+**See [`docs/ANALYTICS.md`](docs/ANALYTICS.md) for complete documentation** with:
+- Detailed usage examples for all 9 features
+- CLI usage for every module
+- Performance benchmarks and best practices
+- Integration with Pandas, DuckDB, Apache Spark
+- Full analytics pipeline examples
+
 ### Legacy Scripts
 
 The original scripts are still available for compatibility:
@@ -162,7 +202,17 @@ hnexport/
 ├── logger.py           # Logging configuration
 ├── downloader.py       # Download orchestration
 ├── processor.py        # Bundle processing
-└── cli.py              # Command-line interface
+├── cli.py              # Command-line interface
+└── analytics/          # Analytics package (9 modules)
+    ├── stats.py        # Statistics generation
+    ├── exporter.py     # Multi-format export
+    ├── search.py       # Full-text search indexing
+    ├── trends.py       # Trend analysis
+    ├── validator.py    # Data validation
+    ├── network.py      # Network graph generation
+    ├── incremental.py  # Incremental updates
+    ├── monitor.py      # Real-time monitoring
+    └── report.py       # Report generation
 ```
 
 ### Key Improvements

@@ -5,3 +5,11 @@ anyio>=4.0.0
 # Optional dependencies for text generation
 markovify>=0.9.4
 spacy>=3.7.0
+
+# Optional dependencies for analytics
+# Install these for advanced analytics features:
+# pip install networkx python-louvain matplotlib
+#
+# networkx>=3.0      # For network graph generation
+# python-louvain>=0.16  # For community detection
+# matplotlib>=3.7.0  # For graph visualization
