@@ -1,11 +1,23 @@
 HN Exporter
 ===========
 
-This repo lets you download all of HN if you wanted to for some reason.
+**Modern async Python tool for downloading all of HackerNews**
 
 HN publishes all site contents to Google Firebase in real-time, but the API is very slow without clever workarounds (4 items per second with basic requests and there's over 20 million items).
 
-Scripts in this repo help you download all of HN concurrently and pipelined for maximum download throughput (a 15x to 20x speedup over single requests).
+This tool uses modern async/await patterns with httpx to download all of HN concurrently with maximum throughput (15-20x speedup over basic requests).
+
+## ✨ Version 2.0 - Modernized!
+
+This version has been completely rewritten with:
+- ⚡ **True async/await** using httpx (not thread-based)
+- 🏗️ **Fully encapsulated, self-managing interfaces**
+- 📦 **Modern Python packaging** (pyproject.toml, type hints)
+- ⚙️ **Configuration management** (environment variables, dataclasses)
+- 📝 **Proper logging** (structured, configurable levels)
+- 🎯 **Type-safe** throughout (Python 3.10+ with type hints)
+- 🔄 **Better error handling** (specific exceptions, retry logic)
+- 🧪 **Clean architecture** (separate modules, testable)
 
 Features
 --------
@@ -25,31 +37,159 @@ Features
     - `markov2.py` does the same but tries to be more clever about parts of speech.
 
 
+Installation
+------------
+
+**Requirements**: Python 3.10+
+
+```bash
+# Clone the repository
+git clone https://github.com/mattsta/hnexport.git
+cd hnexport
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Or install in development mode
+pip install -e .
+```
+
 Usage
 -----
 
-Run a script. If you get module errors, install the module. Run the script again. Repeat.
+### Download all HN items (posts, comments, polls, jobs):
 
-To download all HN items (posts, comments, polls, jobs):
 ```bash
-$ ./import.py -i
+# Using the CLI
+hnexport --items
+
+# With custom concurrency (default: 50)
+hnexport --items --concurrent 100
+
+# With multiprocessing for very large downloads
+hnexport --items --multiprocess --workers 8
+
+# With custom output directory
+hnexport --items --output /data/hn
 ```
 
-Items will be downloaded into `cache/` and each bundle will be filesystem timestamped with a date taken from inside each bundle itself.
+Items will be downloaded into `hn/item/` (or your custom output directory) and each bundle will be filesystem timestamped with a date taken from inside each bundle itself.
 
-If your download is too slow, try adjusting the `-c CONCURRENCY` argument.
+### Download user profiles:
 
-
-To download all user profiles:
 ```bash
-$ ./import.py -u FILE_CONTAINING_ALL_USERNAMES
+# From a file containing usernames (one per line)
+hnexport --users usernames.txt
 ```
 
-You can use `slow_bulk_usernames.sh` to extract all usernames from all downloaded items (edit where necessary, ymmv, etc) to generate the file of usernames to retrieve.
+You can use `slow_bulk_usernames.sh` to extract all usernames from all downloaded items to generate the file of usernames to retrieve.
 
-The download user json detail files will be filesystem timestamped with the user creation timestamp (turns out I'm the 84th registered HN account out of about 650,000 registered users who have posted to the site! (fun fact: the users who signed up before Feb 19, 2007 are all special YC insiders and many are billionaires now)).
+The user JSON files will be filesystem timestamped with the user creation timestamp.
 
+### Environment Variables
 
+You can configure behavior via environment variables:
+
+```bash
+# Max concurrent requests (default: 50)
+export HNEXPORT_MAX_CONCURRENT=100
+
+# Number of worker processes for multiprocessing (default: auto)
+export HNEXPORT_WORKERS=8
+
+# Output directory (default: ./hn)
+export HNEXPORT_OUTPUT_DIR=/data/hn
+
+# Logging level (default: INFO)
+export HNEXPORT_LOG_LEVEL=DEBUG
+
+# Enable file logging
+export HNEXPORT_LOG_FILE=true
+export HNEXPORT_LOG_FILE_PATH=hnexport.log
+```
+
+### Python API
+
+You can also use hnexport as a library:
+
+```python
+import asyncio
+from hnexport import HackerNewsClient, HNDownloader
+
+# Async client usage
+async def example():
+    async with HackerNewsClient() as client:
+        # Get highest item ID
+        highest = await client.get_highest_item_id()
+
+        # Get a single item
+        item = await client.get_item(1)
+
+        # Get multiple items concurrently
+        items = await client.get_items_batch([1, 2, 3, 4, 5])
+
+        # Get a user
+        user = await client.get_user("pg")
+
+# Download all items
+async def download():
+    downloader = HNDownloader(output_dir="hn")
+    stats = await downloader.download_all_items()
+    print(f"Downloaded {stats.successful:,} items in {stats.duration:.1f}s")
+
+asyncio.run(example())
+```
+
+### Legacy Scripts
+
+The original scripts are still available for compatibility:
+- `import.py` - Original downloader (deprecated, use `hnexport` CLI instead)
+- `split-to-parts.py` - Data processor (deprecated, use Python API instead)
+- `markov.py` / `markov2.py` - Text generation examples
+
+Architecture
+------------
+
+The modernized codebase is organized into clean, well-encapsulated modules:
+
+```
+hnexport/
+├── __init__.py         # Package exports
+├── client.py           # Async HTTP client (httpx-based)
+├── config.py           # Configuration management
+├── models.py           # Type-safe data models
+├── exceptions.py       # Custom exception types
+├── logger.py           # Logging configuration
+├── downloader.py       # Download orchestration
+├── processor.py        # Bundle processing
+└── cli.py              # Command-line interface
+```
+
+### Key Improvements
+
+**Before (v1)**: Thread-based concurrency with `requests-futures`
+```python
+# Old approach - thread pools, not true async
+session = FuturesSession(max_workers=25)
+futures = [session.get(url) for url in urls]
+results = [f.result() for f in futures]
+```
+
+**After (v2)**: True async/await with `httpx`
+```python
+# New approach - native async/await
+async with HackerNewsClient() as client:
+    items = await client.get_items_batch(item_ids)
+```
+
+### Benefits
+
+1. **Better Resource Efficiency**: Async I/O uses far less memory than thread pools
+2. **Self-Managing**: Client handles connection pooling, retries, and cleanup automatically
+3. **Type Safety**: Full type hints enable better IDE support and catch errors early
+4. **Configurable**: Environment variables and dataclasses replace hard-coded constants
+5. **Testable**: Clean separation of concerns makes unit testing straightforward
+6. **Modern**: Uses current Python best practices (3.10+, async/await, context managers)
 
 Limitations
 -----------
